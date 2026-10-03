@@ -1,0 +1,99 @@
+# Production self-hosting on one VM with Docker Compose.
+#
+#   cp .env.example .env    # fill in domains and secrets
+#   docker compose up -d
+#
+# Caddy terminates TLS with automatic Let's Encrypt certificates for APP_DOMAIN and API_DOMAIN.
+# Postgres data and nightly logical backups live in named volumes; copy backups off the machine
+# (see docs/operations.md). Object storage defaults to bundled SeaweedFS; set S3_* to use R2/S3.
+
+x-backend: &backend
+  image: ${REPLAY_API_IMAGE:-ghcr.io/OWNER/replay-api:production}
+  restart: unless-stopped
+  env_file: .env
+  environment:
+    ENV: production
+    DATABASE_URL: postgresql+asyncpg://replay:${POSTGRES_APP_PASSWORD}@postgres:5432/replay
+    PUBLIC_APP_URL: https://${APP_DOMAIN}
+    PUBLIC_API_URL: https://${API_DOMAIN}
+    S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-http://s3:8333}
+    S3_CREATE_BUCKET: ${S3_CREATE_BUCKET:-true}
+    LOG_JSON: "true"
+  depends_on:
+    postgres: { condition: service_healthy }
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+      API_DOMAIN: ${API_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on: [web, api]
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      retries: 30
+
+  backup:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      PGPASSWORD: ${POSTGRES_SUPERUSER_PASSWORD}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+    volumes:
+      - backups:/backups
+      - ../backup/backup-loop.sh:/backup-loop.sh:ro
+    entrypoint: ["/bin/sh", "/backup-loop.sh"]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  s3:
+    image: chrislusf/seaweedfs:latest
+    restart: unless-stopped
+    command: server -dir=/data -ip.bind=0.0.0.0 -s3 -s3.config=/etc/seaweedfs/s3.json -volume.max=0
+    volumes:
+      - s3data:/data
+      - ./s3.json:/etc/seaweedfs/s3.json:ro
+
+  migrate:
+    <<: *backend
+    command: ["alembic", "-c", "backend/alembic.ini", "upgrade", "head"]
+    restart: "no"
+
+  api:
+    <<: *backend
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+  worker:
+    <<: *backend
+    command: ["replay-worker"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+  web:
+    image: ${REPLAY_WEB_IMAGE:-ghcr.io/OWNER/replay-web:production}
+    restart: unless-stopped
+    environment:
+      API_INTERNAL_URL: http://api:8000
+
+volumes:
+  caddy_data:
+  pgdata:
+  backups:
+  s3data:

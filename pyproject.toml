@@ -1,0 +1,85 @@
+[project]
+name = "replay-workspace"
+version = "0.0.0"
+description = "Replay monorepo (uv workspace root; not a package)."
+requires-python = ">=3.12,<3.13"
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["backend", "packages/stats", "packages/sdk-python", "packages/cli"]
+
+[tool.uv.sources]
+replay-stats = { workspace = true }
+replay-api = { workspace = true }
+replay-sdk = { workspace = true }
+replay-cli = { workspace = true }
+
+[dependency-groups]
+dev = [
+  "replay-stats",
+  "replay-api",
+  "replay-sdk",
+  "replay-cli",
+  "pytest>=8.3",
+  "pytest-asyncio>=0.24",
+  "pytest-cov>=5.0",
+  "respx>=0.21",
+  "ruff>=0.6",
+  "mypy>=1.11",
+  "pip-audit>=2.7",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = ["web", "backend/migrations/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "ASYNC", "RUF", "SIM", "PT"]
+ignore = [
+  "S101",   # assert is fine in tests and invariants
+  "S311",   # random is used for sampling, not crypto
+  "RUF012", # mutable class attrs are fine for SQLAlchemy/pydantic
+  "B008",   # FastAPI Depends() in defaults is idiomatic
+  "PT011",  # broad pytest.raises is fine
+  "SIM108",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["S105", "S106", "S108", "B017", "ASYNC", "PT018", "PT012", "S608", "S603", "S607"]
+"spike/**" = ["S", "B", "E501"]
+"examples/**" = ["S"]
+# The SDK must never raise into the host app: swallowing errors is the design, and the
+# ingest URL comes from configuration.
+"packages/sdk-python/src/**" = ["S110", "S112", "SIM105", "S310"]
+# CLI/scripts open configured URLs and call git deliberately.
+"packages/cli/src/**" = ["S310", "S603", "S607"]
+"deploy/**" = ["S310"]
+"scripts/**" = ["S310", "PT018", "E501"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+ignore_missing_imports = true
+plugins = ["pydantic.mypy"]
+exclude = ["tests/", "migrations/", "spike/", "examples/", "web/"]
+
+[[tool.mypy.overrides]]
+module = ["replay_api.*"]
+disallow_untyped_decorators = false
+disallow_subclassing_any = false
+warn_return_any = false
+
+[tool.pytest.ini_options]
+pythonpath = ["backend/tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+markers = [
+  "slow: simulation tests that take several seconds",
+  "integration: needs Postgres (and optionally an S3 endpoint) running",
+  "no_clean: do not truncate the database before this test",
+]

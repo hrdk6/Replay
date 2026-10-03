@@ -1,0 +1,55 @@
+name: Promote to production
+
+# Manually promote an image that already passed CI and staging. Configure required reviewers on
+# the "production" environment in GitHub so promotion needs an explicit approval.
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Commit SHA to promote (must already be built by the staging workflow)
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha }}
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Re-tag the tested images as production (no rebuild)
+        run: |
+          owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')
+          for img in replay-api replay-web; do
+            docker buildx imagetools create -t "ghcr.io/$owner/$img:production" "ghcr.io/$owner/$img:${{ inputs.sha }}"
+          done
+      - name: Trigger deploys
+        env:
+          API_HOOK: ${{ secrets.DEPLOY_HOOK_API }}
+          WORKER_HOOK: ${{ secrets.DEPLOY_HOOK_WORKER }}
+          WEB_HOOK: ${{ secrets.DEPLOY_HOOK_WEB }}
+          OWNER: ${{ github.repository_owner }}
+          SHA: ${{ inputs.sha }}
+        run: bash deploy/trigger_deploy.sh
+      - name: Smoke test
+        env:
+          API_URL: ${{ vars.API_URL }}
+          APP_URL: ${{ vars.APP_URL }}
+          SMOKE_API_KEY: ${{ secrets.SMOKE_API_KEY }}
+        run: |
+          if [ -z "$API_URL" ]; then echo "::notice::API_URL not configured for production; skipping smoke test"; exit 0; fi
+          python3 deploy/smoke_test.py --api "$API_URL" ${APP_URL:+--app "$APP_URL"} --wait 300 --expect-release "${{ inputs.sha }}"

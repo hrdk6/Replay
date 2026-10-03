@@ -1,0 +1,26 @@
+# Secret scanning config (CI runs gitleaks over the full git history).
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Development-only defaults (production refuses to start with them) and test fixtures"
+paths = [
+  '''(^|/)node_modules/''',
+  '''(^|/)\.venv/''',
+  '''(^|/)\.next/''',
+  '''uv\.lock$''',
+  '''package-lock\.json$''',
+]
+regexes = [
+  '''dev-only-session-secret-change-me-0123456789''',
+  '''ZGV2LW9ubHktZW5jcnlwdGlvbi1rZXktMzJieXRlcyE=''',
+  '''replay-dev-secret''',
+  '''change-me-and-match''',
+  '''rk_your_key''',
+  '''rk_test''',
+  '''sk-test-''',
+  '''sk-ant-z{20,}''',
+  '''sk-q{20,}''',
+  '''sk-s{20,}''',
+  '''sk-proj-abcdefghijklmnopqrstuvwxyz123456''',
+]

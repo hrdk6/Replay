@@ -1,0 +1,27 @@
+# Copy to .github/workflows/replay.yml in the repository that holds your LLM app.
+name: Replay check
+
+on:
+  pull_request:
+    paths:
+      - "prompts/**"
+      - "src/agent/**"
+      - "replay.toml"
+
+permissions:
+  contents: read
+  pull-requests: write   # to post the verdict comment
+
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # needed to diff against and read files from the PR base
+
+      - uses: YOUR_ORG/replay/action@v1   # pin to a release tag or commit SHA
+        with:
+          api-key: ${{ secrets.REPLAY_API_KEY }}
+          config: replay.toml

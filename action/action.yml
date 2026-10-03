@@ -1,0 +1,67 @@
+name: Replay regression check
+description: >
+  Replay recorded production traces against the change in this pull request, judge the results,
+  and pass or fail the check based on a statistically defensible verdict.
+author: Replay
+branding:
+  icon: rewind
+  color: purple
+
+inputs:
+  api-key:
+    description: Replay project API key (store it as a repository secret).
+    required: true
+  api-url:
+    description: Replay API base URL. Defaults to [replay].api_url in the config file.
+    required: false
+    default: ""
+  config:
+    description: Path to the replay.toml config file.
+    required: false
+    default: replay.toml
+  comment:
+    description: Post or update a PR comment with the verdict.
+    required: false
+    default: "true"
+  github-token:
+    description: Token used to post the PR comment.
+    required: false
+    default: ${{ github.token }}
+  timeout-seconds:
+    description: Maximum time to wait for the experiment.
+    required: false
+    default: "1800"
+
+outputs:
+  verdict:
+    description: SAFE, UNSAFE, INCONCLUSIVE or SKIPPED.
+    value: ${{ steps.check.outputs.verdict }}
+  experiment-url:
+    description: Link to the full report.
+    value: ${{ steps.check.outputs.experiment-url }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install replay CLI
+      shell: bash
+      run: python -m pip install --quiet "${GITHUB_ACTION_PATH}/../packages/cli"
+
+    - name: Run Replay check
+      id: check
+      shell: bash
+      env:
+        REPLAY_API_KEY: ${{ inputs.api-key }}
+        REPLAY_ENDPOINT: ${{ inputs.api-url }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        REPLAY_BASE_REF: ${{ github.base_ref && format('origin/{0}', github.base_ref) || '' }}
+      run: |
+        set -o pipefail
+        if [ -z "${REPLAY_ENDPOINT}" ]; then unset REPLAY_ENDPOINT; fi
+        args=(check --config "${{ inputs.config }}" --timeout "${{ inputs.timeout-seconds }}")
+        if [ "${{ inputs.comment }}" = "true" ]; then args+=(--comment); fi
+        replay "${args[@]}"

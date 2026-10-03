@@ -1,0 +1,373 @@
+@import "tailwindcss";
+
+/*
+ * Replay design tokens.
+ * Colour carries meaning: lagoon = the candidate / primary action, lavender-grey = the baseline,
+ * jade / rose / marigold = SAFE / UNSAFE / INCONCLUSIVE. "-ink" variants meet WCAG AA for
+ * small text on white; the brighter values are for fills, strokes and large type.
+ */
+@theme {
+  --color-canvas: #f2f5fa;
+  --color-paper: #ffffff;
+  --color-ink: #16203a;
+  --color-slate: #5b6478;
+  --color-faint: #8a93a6;
+  --color-rule: #e1e6ef;
+  --color-mist: #edf1f7;
+
+  --color-rail: #111c33;
+  --color-rail-raised: #1a2847;
+  --color-rail-text: #aebcd6;
+  --color-rail-muted: #6f7f9f;
+
+  --color-lagoon: #0b7a8c;
+  --color-lagoon-ink: #086777;
+  --color-lagoon-bright: #18aec3;
+  --color-lagoon-tint: #e2f4f6;
+
+  --color-base: #8c93b8;
+  --color-base-ink: #5d6491;
+  --color-base-tint: #eceef8;
+
+  --color-safe: #1f9d68;
+  --color-safe-ink: #157a4f;
+  --color-safe-tint: #e6f6ee;
+  --color-unsafe: #d93a40;
+  --color-unsafe-ink: #b3282e;
+  --color-unsafe-tint: #fdecec;
+  --color-unsure: #c27a08;
+  --color-unsure-ink: #8f5706;
+  --color-unsure-tint: #fdf3e1;
+  --color-unsure-bright: #f0a93a;
+
+  /* Span kinds in trace views. Kept clear of the verdict colours. */
+  --color-kind-llm: #0b7a8c;
+  --color-kind-tool: #7356c4;
+  --color-kind-tool-tint: #f0ecfa;
+  --color-kind-retrieval: #3d74d6;
+  --color-kind-retrieval-tint: #e9f0fc;
+  --color-kind-other: #8c93b8;
+
+  --font-sans: var(--font-ui), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-code), ui-monospace, monospace;
+  --font-readout: var(--font-shoulders), var(--font-ui), sans-serif;
+
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  --animate-rise: rise 520ms var(--ease-out-soft) both;
+  --animate-fade: fade 380ms ease-out both;
+  --animate-shimmer: shimmer 1.4s linear infinite;
+
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes shimmer {
+    from {
+      background-position: -480px 0;
+    }
+    to {
+      background-position: 480px 0;
+    }
+  }
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.55;
+  font-feature-settings: "tnum" 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+@layer base {
+  input[type="checkbox"],
+  input[type="radio"] {
+    accent-color: var(--color-lagoon);
+  }
+  /* Code is copied and pasted: show the characters that are really there, not ligatures. */
+  pre,
+  code,
+  kbd,
+  .font-mono {
+    font-variant-ligatures: none;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-lagoon-bright);
+    outline-offset: 2px;
+  }
+}
+
+::selection {
+  background: var(--color-lagoon-tint);
+}
+
+/* Component classes sit in a layer so Tailwind utilities on the same element can override them. */
+@layer components {
+/* --- Data tables: quiet rules, generous rows, a soft hover. --- */
+.data-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.data-table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--color-slate);
+  font-size: 12.5px;
+  padding: 10px 14px;
+  background: #f8fafd;
+  border-bottom: 1px solid var(--color-rule);
+  white-space: nowrap;
+}
+.data-table th.num {
+  text-align: right;
+}
+.data-table td {
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--color-mist);
+  vertical-align: top;
+  transition: background-color 160ms ease;
+}
+.data-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+.data-table tr[data-href] {
+  cursor: pointer;
+}
+.data-table tr[data-href]:hover td {
+  background: #f5f9fc;
+}
+.data-table tr[data-href]:hover td:first-child {
+  box-shadow: inset 3px 0 0 var(--color-lagoon-bright);
+}
+.num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Readout type --- */
+.readout {
+  font-family: var(--font-readout);
+  font-variation-settings: "opsz" 72;
+  letter-spacing: 0.01em;
+  line-height: 0.9;
+}
+
+/* --- Measurement paper: a faint dot grid used only behind readouts. --- */
+.graph-paper {
+  background-image: radial-gradient(circle at 1px 1px, rgb(22 32 58 / 0.09) 1px, transparent 0);
+  background-size: 18px 18px;
+}
+
+/* --- Skeletons --- */
+.skeleton {
+  border-radius: 6px;
+  background: linear-gradient(90deg, #e8edf5 0px, #f4f7fb 160px, #e8edf5 320px);
+  background-size: 960px 100%;
+  animation: var(--animate-shimmer);
+}
+
+/* --- Pressable controls give a small, physical response. --- */
+.pressable {
+  transition:
+    transform 120ms var(--ease-out-soft),
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    color 160ms ease;
+}
+.pressable:active:not(:disabled) {
+  transform: translateY(1px) scale(0.985);
+}
+}
+
+/* --- The one orchestrated moment: the verdict readout settles in. --- */
+@keyframes gauge-grow {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+@keyframes gauge-pop {
+  0% {
+    transform: scale(0);
+    opacity: 0;
+  }
+  70% {
+    transform: scale(1.25);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+@keyframes draw-line {
+  from {
+    stroke-dashoffset: 120;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes verdict-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+    letter-spacing: 0.12em;
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    letter-spacing: 0.01em;
+  }
+}
+.animate-gauge .gauge-ci {
+  transform-box: fill-box;
+  animation: gauge-grow 760ms var(--ease-out-soft) 260ms both;
+}
+.animate-gauge .gauge-dot {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: gauge-pop 460ms var(--ease-spring) 820ms both;
+}
+.animate-gauge .gauge-margin {
+  stroke-dasharray: 120;
+  animation: draw-line 600ms ease-out 80ms both;
+}
+.animate-gauge .gauge-label {
+  animation: fade 400ms ease-out 1000ms both;
+}
+.verdict-in {
+  animation: verdict-in 700ms var(--ease-out-soft) both;
+}
+
+/* --- Live progress: a playhead glint travels along the filled bar. --- */
+@keyframes playhead {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(260%);
+  }
+}
+.progress-glint {
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.55), transparent);
+  animation: playhead 1.8s ease-in-out infinite;
+}
+@keyframes live-dot {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgb(24 174 195 / 0.55);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgb(24 174 195 / 0);
+  }
+}
+.live-dot {
+  animation: live-dot 1.6s ease-in-out infinite;
+}
+
+/* --- Login hero: a trace being replayed. --- */
+@keyframes span-in {
+  from {
+    transform: scaleX(0);
+    opacity: 0.2;
+  }
+  to {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+@keyframes sweep {
+  from {
+    left: 0%;
+    opacity: 1;
+  }
+  92% {
+    opacity: 1;
+  }
+  to {
+    left: 100%;
+    opacity: 0;
+  }
+}
+.replay-span {
+  transform-origin: left center;
+  animation: span-in 520ms var(--ease-out-soft) both;
+}
+.replay-sweep {
+  animation: sweep 2.6s cubic-bezier(0.45, 0, 0.55, 1) 200ms both;
+}
+
+/* --- Toasts --- */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.toast-in {
+  animation: toast-in 320ms var(--ease-spring) both;
+}
+
+/* --- Expanding rows / details --- */
+.expand {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 280ms var(--ease-out-soft);
+}
+.expand[data-open="true"] {
+  grid-template-rows: 1fr;
+}
+.expand > * {
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .progress-glint,
+  .replay-sweep {
+    display: none;
+  }
+}

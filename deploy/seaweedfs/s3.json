@@ -1,0 +1,9 @@
+{
+  "identities": [
+    {
+      "name": "replay-dev",
+      "credentials": [{ "accessKey": "replay", "secretKey": "replay-dev-secret" }],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

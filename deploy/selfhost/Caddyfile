@@ -1,0 +1,12 @@
+{$APP_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy web:3000
+}
+
+{$API_DOMAIN} {
+	# The SDK, OTLP exporters and the CI gate talk to the API directly.
+	request_body {
+		max_size 6MB
+	}
+	reverse_proxy api:8000
+}

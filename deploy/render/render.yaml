@@ -1,0 +1,106 @@
+# Render Blueprint for ONE environment. Create it twice (e.g. "replay-staging" from this file
+# with tag :staging, and "replay-production" with tag :production) so staging and production
+# have separate databases, secrets and domains.
+#
+# Before applying:
+#   * replace OWNER with your GitHub org/user (images come from GHCR, built by CI);
+#   * if the GHCR packages are private, add registry credentials named "ghcr" in Render;
+#   * object storage: Render has none, so point S3_* at Cloudflare R2 (recommended) or AWS S3;
+#   * verify plan names and keys against Render's current Blueprint reference.
+#
+# Deploys are triggered by CI through each service's deploy hook with ?imgURL=<image:sha>,
+# so production always runs an image that already passed staging.
+
+envVarGroups:
+  - name: replay-shared
+    envVars:
+      - key: ENV
+        value: production            # use "staging" in the staging Blueprint
+      - key: LOG_JSON
+        value: "true"
+      - key: STORAGE_BACKEND
+        value: s3
+      - key: S3_REGION
+        value: auto
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_ENDPOINT_URL
+        sync: false                  # e.g. https://<account>.r2.cloudflarestorage.com
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: ENCRYPTION_KEY
+        sync: false                  # 32 random bytes, urlsafe base64. BACK IT UP: losing it loses provider keys.
+      - key: PUBLIC_APP_URL
+        sync: false                  # https://app.<your-domain>
+      - key: PUBLIC_API_URL
+        sync: false                  # https://api.<your-domain>
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+      - key: SIGNUP_MODE
+        value: allowlist
+      - key: SIGNUP_ALLOWLIST
+        sync: false
+      - key: ENABLE_SIMULATOR_PROVIDER
+        value: "false"
+      - key: SENTRY_DSN
+        sync: false
+      - key: METRICS_TOKEN
+        generateValue: true
+
+services:
+  - type: web
+    name: replay-api
+    runtime: image
+    image:
+      url: ghcr.io/OWNER/replay-api:production
+    plan: starter
+    healthCheckPath: /readyz
+    preDeployCommand: alembic -c backend/alembic.ini upgrade head
+    envVars:
+      - fromGroup: replay-shared
+      - key: DATABASE_URL
+        fromDatabase:
+          name: replay-db
+          property: connectionString
+      - key: WEB_CONCURRENCY
+        value: "2"
+
+  - type: worker
+    name: replay-worker
+    runtime: image
+    image:
+      url: ghcr.io/OWNER/replay-api:production
+    plan: starter
+    dockerCommand: replay-worker
+    envVars:
+      - fromGroup: replay-shared
+      - key: DATABASE_URL
+        fromDatabase:
+          name: replay-db
+          property: connectionString
+
+  - type: web
+    name: replay-web
+    runtime: image
+    image:
+      url: ghcr.io/OWNER/replay-web:production
+    plan: starter
+    healthCheckPath: /login
+    envVars:
+      - key: API_INTERNAL_URL
+        fromService:
+          type: web
+          name: replay-api
+          property: hostport
+
+databases:
+  - name: replay-db
+    plan: basic-1gb
+    postgresMajorVersion: "17"
+    ipAllowList: []                  # private network only

@@ -1,0 +1,18 @@
+[project]
+name = "replay-cli"
+version = "0.1.0"
+description = "Replay command-line tool and CI gate. Standard library only."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+dependencies = []
+
+[project.scripts]
+replay = "replay_cli.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/replay_cli"]

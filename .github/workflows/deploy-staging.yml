@@ -1,0 +1,84 @@
+name: Deploy to staging
+
+# After CI passes on main: build images ONCE, tag them with the commit SHA, deploy that exact
+# image to staging, run migrations (pre-deploy) and a smoke test. Production is promoted
+# manually from the same SHA (promote-production.yml).
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+jobs:
+  images:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.meta.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - id: meta
+        run: |
+          echo "sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
+          echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backend/Dockerfile
+          push: true
+          build-args: RELEASE=${{ steps.meta.outputs.sha }}
+          tags: |
+            ghcr.io/${{ steps.meta.outputs.owner }}/replay-api:${{ steps.meta.outputs.sha }}
+            ghcr.io/${{ steps.meta.outputs.owner }}/replay-api:staging
+          cache-from: type=gha,scope=api
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: web/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ steps.meta.outputs.owner }}/replay-web:${{ steps.meta.outputs.sha }}
+            ghcr.io/${{ steps.meta.outputs.owner }}/replay-web:staging
+          cache-from: type=gha,scope=web
+
+  deploy:
+    needs: images
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.images.outputs.sha }}
+      - name: Trigger deploys (Render deploy hooks; skipped until configured)
+        env:
+          API_HOOK: ${{ secrets.DEPLOY_HOOK_API }}
+          WORKER_HOOK: ${{ secrets.DEPLOY_HOOK_WORKER }}
+          WEB_HOOK: ${{ secrets.DEPLOY_HOOK_WEB }}
+          OWNER: ${{ github.repository_owner }}
+          SHA: ${{ needs.images.outputs.sha }}
+        run: bash deploy/trigger_deploy.sh
+      - name: Smoke test
+        env:
+          API_URL: ${{ vars.API_URL }}
+          APP_URL: ${{ vars.APP_URL }}
+          SMOKE_API_KEY: ${{ secrets.SMOKE_API_KEY }}
+        run: |
+          if [ -z "$API_URL" ]; then echo "::notice::API_URL not configured for staging; skipping smoke test"; exit 0; fi
+          python3 deploy/smoke_test.py --api "$API_URL" ${APP_URL:+--app "$APP_URL"} --wait 300 --expect-release "${{ needs.images.outputs.sha }}"

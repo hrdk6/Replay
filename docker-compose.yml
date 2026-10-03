@@ -1,0 +1,99 @@
+# Local development and single-host self-hosting.
+#
+#   docker compose up -d postgres s3                   # infra only (run api/web on the host)
+#   docker compose up --build                          # everything
+#
+# Production self-hosting: see deploy/selfhost/ (adds Caddy for HTTPS).
+
+x-backend-env: &backend-env
+  ENV: ${ENV:-development}
+  DATABASE_URL: postgresql+asyncpg://replay:replay@postgres:5432/replay
+  PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:3000}
+  PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
+  SESSION_SECRET: ${SESSION_SECRET:-dev-only-session-secret-change-me-0123456789}
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY:-ZGV2LW9ubHktZW5jcnlwdGlvbi1rZXktMzJieXRlcyE=}
+  GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+  GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+  SIGNUP_MODE: ${SIGNUP_MODE:-open}  # local dev; production self-hosting defaults to allowlist
+  SIGNUP_ALLOWLIST: ${SIGNUP_ALLOWLIST:-}
+  DEV_LOGIN_ENABLED: ${DEV_LOGIN_ENABLED:-true}
+  STORAGE_BACKEND: s3
+  S3_ENDPOINT_URL: http://s3:8333
+  S3_CREATE_BUCKET: "true"
+  S3_BUCKET: replay-payloads
+  S3_ACCESS_KEY_ID: replay
+  S3_SECRET_ACCESS_KEY: replay-dev-secret
+  ENABLE_SIMULATOR_PROVIDER: ${ENABLE_SIMULATOR_PROVIDER:-true}
+  LOG_JSON: "false"
+  SENTRY_DSN: ${SENTRY_DSN:-}
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_PASSWORD: postgres
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./deploy/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres && psql -U postgres -d replay -c 'select 1' >/dev/null"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  s3:
+    # SeaweedFS: S3-compatible object store for local dev (MinIO no longer publishes images).
+    image: chrislusf/seaweedfs:latest
+    command: server -dir=/data -ip.bind=0.0.0.0 -s3 -s3.config=/etc/seaweedfs/s3.json -volume.max=0
+    ports: ["8333:8333"]
+    volumes:
+      - s3data:/data
+      - ./deploy/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:9333/cluster/status"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+
+  migrate:
+    build: { context: ., dockerfile: backend/Dockerfile }
+    command: ["alembic", "-c", "backend/alembic.ini", "upgrade", "head"]
+    environment: *backend-env
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
+  api:
+    build: { context: ., dockerfile: backend/Dockerfile }
+    environment: *backend-env
+    ports: ["8000:8000"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      s3: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz').status==200 else 1)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  worker:
+    build: { context: ., dockerfile: backend/Dockerfile }
+    command: ["replay-worker"]
+    environment: *backend-env
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      s3: { condition: service_healthy }
+
+  web:
+    build: { context: ., dockerfile: web/Dockerfile }
+    environment:
+      API_INTERNAL_URL: http://api:8000
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
+    ports: ["3000:3000"]
+    depends_on:
+      api: { condition: service_healthy }
+
+volumes:
+  pgdata:
+  s3data:

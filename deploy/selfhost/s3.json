@@ -1,0 +1,9 @@
+{
+  "identities": [
+    {
+      "name": "replay",
+      "credentials": [{ "accessKey": "replay", "secretKey": "change-me-and-match-S3_SECRET_ACCESS_KEY" }],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}
