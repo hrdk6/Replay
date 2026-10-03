@@ -38,7 +38,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: .
           file: backend/Dockerfile
@@ -48,7 +48,7 @@ jobs:
             ghcr.io/${{ steps.meta.outputs.owner }}/replay-api:${{ steps.meta.outputs.sha }}
             ghcr.io/${{ steps.meta.outputs.owner }}/replay-api:staging
           cache-from: type=gha,scope=api
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: .
           file: web/Dockerfile
