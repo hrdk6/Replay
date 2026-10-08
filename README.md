@@ -7,6 +7,11 @@ scores both sides with an LLM judge you have checked against human labels, and r
 can defend: **SAFE**, **UNSAFE** or **INCONCLUSIVE**, with confidence intervals. It can block pull
 requests that make things significantly worse.
 
+Replay is built to run as a **hosted cloud service**: sign in, install the SDK, and get regression
+verdicts without operating any infrastructure. The same code can also be self-hosted. This README
+describes the target cloud product; the [Cloud readiness](#cloud-readiness-built-vs-remaining) section
+says exactly which parts exist today and which are still to come.
+
 ## Contents
 
 1. [Why Replay](#why-replay)
@@ -19,9 +24,10 @@ requests that make things significantly worse.
 8. [Configuration](#configuration)
 9. [Tests](#tests)
 10. [Repository layout](#repository-layout)
-11. [Deployment](#deployment)
-12. [Status](#status)
-13. [Documentation](#documentation)
+11. [Replay Cloud: deployment architecture](#replay-cloud-deployment-architecture)
+12. [Cloud readiness](#cloud-readiness-built-vs-remaining)
+13. [Status](#status)
+14. [Documentation](#documentation)
 
 ---
 
@@ -293,22 +299,7 @@ erDiagram
 Supporting tables: `invites`, `sessions`, `audit_log`, `usage_counters`, `jobs`, `cron_state`. Every
 tenant table carries `org_id`, an index on it, and a forced RLS policy.
 
-### Deployment topology
-
-```mermaid
-flowchart TB
-    U["Users / SDKs / CI"] --> CDN["TLS edge<br/>(Caddy self-host · Render + Cloudflare)"]
-    CDN --> WEBC["web :3000"]
-    CDN --> APIC["api :8000"]
-    WEBC --> APIC
-    APIC --> PGC[("Postgres")]
-    APIC --> S3C[("Object storage")]
-    WRKC["worker (N replicas)"] --> PGC
-    WRKC --> S3C
-    WRKC --> EXT["LLM providers"]
-    MIG["migrate (one-shot)<br/>alembic upgrade head"] --> PGC
-    BKP["backup loop<br/>+ restore drill"] --> PGC
-```
+Production deployment is covered in [Replay Cloud: deployment architecture](#replay-cloud-deployment-architecture).
 
 ## Core concepts
 
@@ -507,7 +498,106 @@ backend/src/replay_api/
   worker/            queue primitives, handlers, worker loop
 ```
 
-## Deployment
+## Replay Cloud: deployment architecture
+
+Users only ever see two HTTPS hostnames. Ports such as `:3000` and `:8000` are *internal* container
+ports; the edge routes by hostname and users never type them.
+
+| Public host | Used by | Routed to |
+|---|---|---|
+| `app.<domain>` | People in a browser | Dashboard service (listens on 3000 inside the cluster) |
+| `api.<domain>` | SDKs, OTLP exporters, CI | API service (listens on 8000 inside the cluster) |
+
+```mermaid
+flowchart TB
+    USERS["Browsers"]
+    SDKS["SDKs · OTLP · CI"]
+
+    subgraph EDGE["Edge"]
+        DNS["DNS + CDN + WAF<br/>TLS termination"]
+    end
+
+    subgraph REGION["Cloud region"]
+        direction TB
+        LB["Load balancer<br/>routes by hostname"]
+
+        subgraph STATELESS["Stateless services (autoscaled)"]
+            WEBS["Dashboard<br/>app.domain"]
+            APIS["API<br/>api.domain"]
+            WRKS["Worker pool<br/>scales on queue depth"]
+        end
+
+        subgraph DATA["Managed data layer"]
+            PGP[("Postgres primary<br/>RLS enforced")]
+            PGR[("Replica<br/>standby")]
+            OBJ[("Object storage<br/>private bucket")]
+        end
+
+        SEC["Secrets and KMS"]
+        OBS["Logs · metrics · alerts<br/>error tracking"]
+    end
+
+    LLMP["LLM providers<br/>customer keys"]
+    GHUB["GitHub<br/>OAuth · PR comments"]
+
+    USERS --> DNS
+    SDKS --> DNS
+    DNS --> LB
+    LB --> WEBS
+    LB --> APIS
+    WEBS --> APIS
+    APIS --> PGP
+    APIS --> OBJ
+    WRKS --> PGP
+    WRKS --> OBJ
+    WRKS --> LLMP
+    PGP -. "streaming replication<br/>+ PITR backups" .-> PGR
+    APIS --> SEC
+    WRKS --> SEC
+    APIS --> OBS
+    WRKS --> OBS
+    APIS --> GHUB
+```
+
+Design choices for the cloud service:
+
+- **Stateless services, stateful data.** The API, dashboard and workers hold no local state, so they
+  scale horizontally and restart freely. All state lives in Postgres and object storage.
+- **No separate broker.** The job queue is Postgres (`FOR UPDATE SKIP LOCKED`). Workers scale on queue
+  depth, and a dead worker's jobs are requeued after the visibility timeout.
+- **Migrations before traffic.** A one-shot migrate step runs before new API and worker versions start.
+- **Secrets stay out of the app.** The encryption wrapping key and session secret come from a secrets
+  manager, and the app refuses to start in production with development values.
+- **Backups are drilled.** Automated backups with point-in-time recovery, plus a scheduled restore
+  verification ([`deploy/backup/`](deploy/backup)).
+
+### Multi-tenant model in the cloud
+
+```mermaid
+flowchart LR
+    subgraph T1["Org A"]
+        A1["Projects · keys · traces"]
+    end
+    subgraph T2["Org B"]
+        B1["Projects · keys · traces"]
+    end
+    subgraph SHARED["Shared infrastructure"]
+        SVC["API + worker fleet"]
+        DBS[("One Postgres<br/>org_id + forced RLS")]
+        BKT[("One bucket<br/>per-org prefix")]
+    end
+    A1 --> SVC
+    B1 --> SVC
+    SVC --> DBS
+    SVC --> BKT
+    Q["Per-org quotas · spend caps · rate limits"] -.-> SVC
+```
+
+Customers share infrastructure but not data: every query is org-scoped in code and again by Postgres
+row-level security. Each org has daily trace and run quotas and monthly spend caps, and replays run on
+the customer's own LLM keys, so Replay never pays for customer model usage.
+
+### Delivery pipeline
 
 ```mermaid
 flowchart LR
@@ -517,10 +607,25 @@ flowchart LR
     SMOKE -.->|"manual dispatch with SHA"| PROMO["promote-production<br/>(required reviewers)"]
 ```
 
-Artifacts are provider-agnostic: a Render Blueprint ([`deploy/render/`](deploy/render)), a single-host
-self-hosting stack with Caddy HTTPS ([`deploy/selfhost/`](deploy/selfhost)), automated backups and a
-restore drill ([`deploy/backup/`](deploy/backup)). See [docs/operations.md](docs/operations.md) and
-[docs/self-hosting.md](docs/self-hosting.md).
+The same image that passed staging is promoted to production. Artifacts are provider-agnostic: a Render
+Blueprint ([`deploy/render/`](deploy/render)) for the managed cloud, and a single-host stack with Caddy
+HTTPS ([`deploy/selfhost/`](deploy/selfhost)) for customers who self-host. See
+[docs/operations.md](docs/operations.md) and [docs/self-hosting.md](docs/self-hosting.md).
+
+## Cloud readiness: built vs remaining
+
+| Area | Built and tested | Needed to open the cloud service |
+|---|---|---|
+| Core product | Capture, replay, judging, statistics, dashboard, CI gate | — |
+| Tenancy and security | Org isolation (app + RLS), encrypted provider keys, SSRF guard, redaction, audit log, quotas | External penetration test; per-IP/global rate limiting across instances |
+| Delivery | CI, staging deploy, manual production promotion, smoke test, backups and restore drill | Create hosting account, domain and TLS; wire secrets; run restore drill on staging |
+| Identity | GitHub OAuth, invites, allowlist | Public sign-up policy; email or Google login; SSO/SAML for enterprise |
+| Commercial | Usage counters, quotas, spend caps | Plans and billing, usage-based invoicing, terms and privacy reviewed by a lawyer |
+| Operations | Metrics endpoint, Sentry hooks, health checks | Alerting on readiness, 5xx rate and dead jobs; status page; on-call |
+| Scale | Horizontally safe API and workers | Autoscaling rules, read replica, load test at target volume, multi-region (later) |
+| SDKs | Python | TypeScript SDK and other languages |
+
+The concrete launch steps are in [docs/launch-checklist.md](docs/launch-checklist.md).
 
 ## Security at a glance
 
