@@ -4,7 +4,7 @@
 #   alembic -c backend/alembic.ini upgrade head  migrations (run before each deploy)
 # Build from the repository root: docker build -f backend/Dockerfile .
 
-FROM python:3.12-slim AS build
+FROM python:3.15-slim AS build
 COPY --from=ghcr.io/astral-sh/uv:0.12 /uv /bin/uv
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
 WORKDIR /app
@@ -22,7 +22,7 @@ COPY packages/stats packages/stats
 RUN uv sync --frozen --no-dev --no-editable --package replay-api
 
 
-FROM python:3.12-slim
+FROM python:3.15-slim
 ARG RELEASE=dev
 RUN useradd --create-home --uid 10001 app
 WORKDIR /app
